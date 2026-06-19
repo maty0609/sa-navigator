@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+migrations/versions/*.py
+*.egg-info/
+.venv/
+venv/
