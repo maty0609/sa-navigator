@@ -2,10 +2,12 @@ import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.main import app
-from app.models.opportunity import Opportunity
+from app.models.opportunity import Opportunity, OpportunityStatus
+from app.models.opportunity_update import OpportunityUpdate as OpportunityUpdateModel
+from app.models.opportunity_change_log import OpportunityChangeLog
 from app.models.user import User
 from app.services.auth_service import create_access_token, hash_password
 
@@ -37,6 +39,7 @@ def _make_opp(db: Session, user: User, **kwargs) -> Opportunity:
         ccw_estimate=kwargs.get("ccw_estimate", ""),
         salesforce_link=kwargs.get("salesforce_link", ""),
         sow_sod=kwargs.get("sow_sod", ""),
+        status=kwargs.get("status", OpportunityStatus.NEW),
         created_by=user.id,
     )
     db.add(opp)
@@ -75,6 +78,7 @@ async def test_create_opportunity(db: Session):
     assert data["salesforce_link"] == \
         "https://company.my.salesforce.com/006xx000000DzYY"
     assert data["sow_sod"] == "https://example.com/sow-123"
+    assert data["status"] == "New"
     assert "id" in data
 
 
@@ -100,6 +104,7 @@ async def test_create_opportunity_optional_fields_empty(db: Session):
     assert data["ccw_estimate"] == ""
     assert data["salesforce_link"] == ""
     assert data["sow_sod"] == ""
+    assert data["status"] == "New"
 
 
 @pytest.mark.asyncio
@@ -289,3 +294,230 @@ async def test_delete_opportunity(db: Session):
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_opportunity_with_status(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/opportunities",
+            json={
+                "client": "Globex",
+                "project": "Cloud Migration",
+                "owner": "Jane Smith",
+                "status": "Won",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["status"] == "Won"
+
+
+@pytest.mark.asyncio
+async def test_list_filter_by_status(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    _make_opp(db, user, client="Acme", status=OpportunityStatus.NEW)
+    _make_opp(db, user, client="Globex", status=OpportunityStatus.WON)
+    _make_opp(db, user, client="Initech", status=OpportunityStatus.WON)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/api/opportunities?status=Won",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    assert all(item["status"] == "Won" for item in data["items"])
+
+
+@pytest.mark.asyncio
+async def test_update_opportunity_status(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", status=OpportunityStatus.NEW)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.patch(
+            f"/api/opportunities/{opp.id}",
+            json={"status": "Won"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "Won"
+    assert data["client"] == "Acme"  # Unchanged field preserved
+
+
+@pytest.mark.asyncio
+async def test_create_opportunity_invalid_status(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/opportunities",
+            json={
+                "client": "Globex",
+                "project": "Cloud Migration",
+                "owner": "Jane Smith",
+                "status": "InvalidStatus",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_with_log_changes_creates_entries(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Old Project", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.patch(
+            f"/api/opportunities/{opp.id}?log_changes=true",
+            json={
+                "project": "New Project",
+                "owner": "Jane",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    change_logs = db.exec(
+        select(OpportunityChangeLog).where(
+            OpportunityChangeLog.opportunity_id == opp.id
+        )
+    ).all()
+    assert len(change_logs) == 2
+
+    project_log = next(c for c in change_logs if c.field_name == "project")
+    assert project_log.old_value == "Old Project"
+    assert project_log.new_value == "New Project"
+    assert project_log.created_by == user.id
+
+    owner_log = next(c for c in change_logs if c.field_name == "owner")
+    assert owner_log.old_value == "John"
+    assert owner_log.new_value == "Jane"
+
+
+@pytest.mark.asyncio
+async def test_update_without_log_changes_no_entries(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Old")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.patch(
+            f"/api/opportunities/{opp.id}",
+            json={"project": "New"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    change_logs = db.exec(
+        select(OpportunityChangeLog).where(
+            OpportunityChangeLog.opportunity_id == opp.id
+        )
+    ).all()
+    assert len(change_logs) == 0
+
+
+@pytest.mark.asyncio
+async def test_update_log_skips_unchanged_fields(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Same", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.patch(
+            f"/api/opportunities/{opp.id}?log_changes=true",
+            json={
+                "project": "Same",
+                "owner": "Jane",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    change_logs = db.exec(
+        select(OpportunityChangeLog).where(
+            OpportunityChangeLog.opportunity_id == opp.id
+        )
+    ).all()
+    assert len(change_logs) == 1
+    assert change_logs[0].field_name == "owner"
+
+
+@pytest.mark.asyncio
+async def test_updates_feed_mixed_manual_and_change_logs(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Old", owner="John")
+
+    manual = OpportunityUpdateModel(
+        text="Sent proposal to client",
+        opportunity_id=opp.id,
+        created_by=user.id,
+    )
+    db.add(manual)
+    db.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.patch(
+            f"/api/opportunities/{opp.id}?log_changes=true",
+            json={"owner": "Jane"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        response = await client.get(
+            f"/api/opportunities/{opp.id}/updates",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+
+    change_entry = next(e for e in data if "field_name" in e)
+    assert change_entry["field_name"] == "owner"
+    assert change_entry["old_value"] == "John"
+    assert change_entry["new_value"] == "Jane"
+
+    manual_entry = next(e for e in data if "text" in e)
+    assert manual_entry["text"] == "Sent proposal to client"
+
+
+@pytest.mark.asyncio
+async def test_updates_feed_empty(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Test")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/opportunities/{opp.id}/updates",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == []

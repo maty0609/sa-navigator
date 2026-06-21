@@ -82,7 +82,7 @@ def auth_headers(test_user):
 
 @pytest.fixture
 def test_opportunity(db: Session, test_user):
-    from app.models.opportunity import Opportunity
+    from app.models.opportunity import Opportunity, OpportunityStatus
 
     opp = Opportunity(
         id=uuid.uuid4(),
@@ -91,6 +91,7 @@ def test_opportunity(db: Session, test_user):
         owner="John Doe",
         ccw_estimate="",
         salesforce_link="",
+        status=OpportunityStatus.NEW,
         created_by=str(test_user.id),
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),

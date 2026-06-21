@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useOpportunities, useDeleteOpportunity, Opportunity } from "@/lib/queries";
+import { useOpportunities, useDeleteOpportunity, Opportunity, OPPORTUNITY_STATUS_OPTIONS, OpportunityStatus } from "@/lib/queries";
 import { useDashboardContext } from "@/app/(dashboard)/layout";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,25 @@ import { Input } from "@/components/ui/input";
 import { Trash2, Pencil, Search, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { OpportunityDialog } from "@/components/opportunities/OpportunityDialog";
 
-type SortField = "client" | "project" | "owner" | "created_at" | "updated_at";
+type SortField = "client" | "project" | "owner" | "account_manager" | "created_at" | "updated_at";
+
+const statusBadgeVariants: Record<string, string> = {
+  "New": "bg-blue-100 text-blue-700 hover:bg-blue-100",
+  "Documentation in progress": "bg-yellow-100 text-yellow-700 hover:bg-yellow-100",
+  "Waiting on client": "bg-orange-100 text-orange-700 hover:bg-orange-100",
+  "Waiting on sales": "bg-purple-100 text-purple-700 hover:bg-purple-100",
+  "Waiting on engineering": "bg-pink-100 text-pink-700 hover:bg-pink-100",
+  "Won": "bg-green-100 text-green-700 hover:bg-green-100",
+  "Lost": "bg-red-100 text-red-700 hover:bg-red-100",
+};
+
+function StatusBadge({ status }: { status: OpportunityStatus }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${statusBadgeVariants[status] || "bg-gray-100 text-gray-700"}`}>
+      {OPPORTUNITY_STATUS_OPTIONS.find((o) => o.value === status)?.label ?? status}
+    </span>
+  );
+}
 
 export function OpportunityTable() {
   const { setSelectedOpportunityId } = useDashboardContext();
@@ -18,10 +36,18 @@ export function OpportunityTable() {
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<OpportunityStatus | "">("");
   const [editItem, setEditItem] = useState<Opportunity | null>(null);
 
   const sort = sortDir === "desc" ? `-${sortField}` : sortField;
-  const { data, isLoading, isFetching } = useOpportunities({ search, client, sort, page, page_size: 25 });
+  const { data, isLoading, isFetching } = useOpportunities({
+    search,
+    client,
+    status: statusFilter || undefined,
+    sort,
+    page,
+    page_size: 25,
+  });
   const deleteMutation = useDeleteOpportunity();
 
   const handleSort = (field: SortField) => {
@@ -68,6 +94,18 @@ export function OpportunityTable() {
           onChange={(e) => { setClient(e.target.value); setPage(1); }}
           className="max-w-xs"
         />
+        <select
+          value={statusFilter}
+          onChange={(e) => { setStatusFilter(e.target.value as OpportunityStatus | ""); setPage(1); }}
+          className="flex h-9 w-[180px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <option value="">All statuses</option>
+          {OPPORTUNITY_STATUS_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Table */}
@@ -90,6 +128,12 @@ export function OpportunityTable() {
                   Owner {sortField === "owner" && (sortDir === "asc" ? "↑" : "↓")}
                 </button>
               </TableHead>
+              <TableHead className="w-[150px]">
+                <button className="flex items-center gap-1" onClick={() => handleSort("account_manager")}>
+                  Account Mgr {sortField === "account_manager" && (sortDir === "asc" ? "↑" : "↓")}
+                </button>
+              </TableHead>
+              <TableHead className="w-[130px]">Status</TableHead>
               <TableHead className="w-[120px]">
                 <button className="flex items-center gap-1" onClick={() => handleSort("created_at")}>
                   Created {sortField === "created_at" && (sortDir === "asc" ? "↑" : "↓")}
@@ -101,7 +145,7 @@ export function OpportunityTable() {
           <TableBody>
             {data?.items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                   No opportunities found
                 </TableCell>
               </TableRow>
@@ -115,6 +159,10 @@ export function OpportunityTable() {
                   <TableCell className="font-medium">{opp.client}</TableCell>
                   <TableCell className="max-w-xs truncate">{opp.project}</TableCell>
                   <TableCell>{opp.owner}</TableCell>
+                  <TableCell>{opp.account_manager || "—"}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={opp.status} />
+                  </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(opp.created_at).toLocaleDateString()}
                   </TableCell>

@@ -1,7 +1,20 @@
 import uuid
 from datetime import datetime
+from enum import Enum
+from typing import Optional
 
 from sqlmodel import Field, SQLModel
+import sqlmodel
+
+
+class OpportunityStatus(str, Enum):
+    NEW = "New"
+    DOC_IN_PROGRESS = "Documentation in progress"
+    WAIT_CLIENT = "Waiting on client"
+    WAIT_SALES = "Waiting on sales"
+    WAIT_ENG = "Waiting on engineering"
+    WON = "Won"
+    LOST = "Lost"
 
 
 class Opportunity(SQLModel, table=True):
@@ -14,6 +27,15 @@ class Opportunity(SQLModel, table=True):
     ccw_estimate: str = Field(default="", max_length=200)
     salesforce_link: str = Field(default="", max_length=500)
     sow_sod: str = Field(default="", max_length=500)
+    total_tcv: Optional[float] = Field(default=None)
+    total_bgp: Optional[float] = Field(default=None)
+    total_margin: Optional[float] = Field(default=None)
+    account_manager: str = Field(default="", max_length=200)
+    close_date: str = Field(default="", max_length=10)
+    status: OpportunityStatus = Field(
+        default=OpportunityStatus.NEW,
+        sa_type=sqlmodel.String(30),
+    )
     created_by: uuid.UUID = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
