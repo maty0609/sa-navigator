@@ -76,7 +76,7 @@ def list_opportunities(
         "client", "project", "owner", "ccw_estimate",
         "salesforce_link", "sow_sod", "total_tcv", "total_bgp",
         "total_margin", "account_manager", "close_date",
-        "status", "created_at", "updated_at",
+        "status", "created_at", "updated_at", "last_activity_at",
     }
     if sort_field not in valid_fields:
         sort_field = "created_at"
@@ -162,6 +162,9 @@ def update_opportunity(
     for field, value in update_data.items():
         setattr(opp, field, value)
 
+    opp.updated_at = datetime.utcnow()
+    opp.last_activity_at = datetime.utcnow()
+
     db.add(opp)
     db.commit()
     db.refresh(opp)
@@ -192,6 +195,21 @@ def delete_opportunity(
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    # Delete related records first to avoid foreign key violations
+    for update in db.exec(
+        select(OpportunityUpdateModel).where(
+            OpportunityUpdateModel.opportunity_id == opportunity_id
+        )
+    ).all():
+        db.delete(update)
+
+    for change_log in db.exec(
+        select(OpportunityChangeLog).where(
+            OpportunityChangeLog.opportunity_id == opportunity_id
+        )
+    ).all():
+        db.delete(change_log)
 
     db.delete(opp)
     db.commit()
@@ -269,6 +287,9 @@ def create_opportunity_update(
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    opp.last_activity_at = datetime.utcnow()
+    db.add(opp)
 
     update = OpportunityUpdateModel(
         text=body.text,

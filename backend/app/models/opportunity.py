@@ -39,3 +39,4 @@ class Opportunity(SQLModel, table=True):
     created_by: uuid.UUID = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_activity_at: datetime = Field(default_factory=datetime.utcnow, index=True)

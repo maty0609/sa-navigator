@@ -260,8 +260,8 @@ function UpdatesPanel({ opportunityId }: { opportunityId: string }) {
         title="Delete Comment"
         message="Are you sure you want to delete this comment? This action cannot be undone."
       />
-      <div className="flex flex-col h-full">
-        <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+      <div className="flex flex-col">
+        <div className="space-y-3 pr-1">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -494,7 +494,7 @@ export function OpportunityCard({ opportunityId, onClose }: OpportunityCardProps
         </DialogHeader>
 
         {/* Body */}
-        <div className="flex-1 overflow-hidden grid grid-cols-[1fr_340px] divide-x">
+        <div className="flex-1 overflow-hidden grid grid-cols-[320px_1fr] grid-rows-[1fr] divide-x">
           {/* Left: Details or Edit Form */}
           <div className="p-6 overflow-y-auto">
             {isLoading ? (
@@ -515,7 +515,7 @@ export function OpportunityCard({ opportunityId, onClose }: OpportunityCardProps
 
           {/* Right: Updates */}
           {opportunityId && (
-            <div className="p-4">
+            <div className="p-4 h-full overflow-y-auto">
               <UpdatesPanel opportunityId={opportunityId} />
             </div>
           )}

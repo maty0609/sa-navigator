@@ -29,6 +29,7 @@ export interface Opportunity {
   created_by: string;
   created_at: string;
   updated_at: string;
+  last_activity_at: string;
 }
 
 export type OpportunityStatus =
@@ -133,7 +134,7 @@ export function useOpportunity(id: string | undefined) {
 export function useCreateOpportunity() {
   const queryClient = useQueryClient();
 
-  return useMutation<Opportunity, Error, Omit<Opportunity, "id" | "created_by" | "created_at" | "updated_at">>({
+  return useMutation<Opportunity, Error, Omit<Opportunity, "id" | "created_by" | "created_at" | "updated_at" | "last_activity_at">>({
     mutationFn: async (data) => {
       const response = await api.post("/api/opportunities", data);
       return response.data;

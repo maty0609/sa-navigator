@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Trash2, Pencil, Search, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { OpportunityDialog } from "@/components/opportunities/OpportunityDialog";
 
-type SortField = "client" | "project" | "owner" | "account_manager" | "created_at" | "updated_at";
+type SortField = "client" | "project" | "owner" | "account_manager" | "created_at" | "updated_at" | "last_activity_at";
 
 const statusBadgeVariants: Record<string, string> = {
   "New": "bg-blue-100 text-blue-700 hover:bg-blue-100",
@@ -33,7 +33,7 @@ export function OpportunityTable() {
   const { setSelectedOpportunityId } = useDashboardContext();
   const [search, setSearch] = useState("");
   const [client, setClient] = useState("");
-  const [sortField, setSortField] = useState<SortField>("created_at");
+  const [sortField, setSortField] = useState<SortField>("last_activity_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<OpportunityStatus | "">("");
@@ -135,8 +135,8 @@ export function OpportunityTable() {
               </TableHead>
               <TableHead className="w-[130px]">Status</TableHead>
               <TableHead className="w-[120px]">
-                <button className="flex items-center gap-1" onClick={() => handleSort("created_at")}>
-                  Created {sortField === "created_at" && (sortDir === "asc" ? "↑" : "↓")}
+                <button className="flex items-center gap-1" onClick={() => handleSort("last_activity_at")}>
+                  Last Activity {sortField === "last_activity_at" && (sortDir === "asc" ? "↑" : "↓")}
                 </button>
               </TableHead>
               <TableHead className="w-[100px]">Actions</TableHead>
@@ -164,7 +164,7 @@ export function OpportunityTable() {
                     <StatusBadge status={opp.status} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {new Date(opp.created_at).toLocaleDateString()}
+                    {new Date(opp.last_activity_at).toLocaleDateString()}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">

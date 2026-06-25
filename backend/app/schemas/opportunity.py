@@ -54,6 +54,7 @@ class OpportunityRead(BaseModel):
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    last_activity_at: datetime
 
     model_config = {"from_attributes": True}
 
