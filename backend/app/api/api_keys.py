@@ -12,6 +12,7 @@ from sqlmodel import Session
 
 from app.database import get_db
 from app.deps import get_current_user_id
+from app.roles import AppRole
 from app.schemas.api_key import (
     ApiKeyCreate,
     ApiKeyCreated,
@@ -39,7 +40,7 @@ def create_key(
     db: Session = Depends(get_db),
     current_user_id: uuid.UUID = Depends(get_current_user_id),
 ):
-    valid_roles = {"viewer", "editor", "admin"}
+    valid_roles = {r.value for r in AppRole}
     if body.role not in valid_roles:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -110,6 +111,6 @@ def delete_key(
 
     api_key = db.get(ApiKey, key_id)
     if not api_key or api_key.user_id != current_user_id:
-        raise HTTPException(status_code=404, detail="API key not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     revoke_api_key(key_id, db)

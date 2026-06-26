@@ -71,7 +71,13 @@ def require_role(min_role: AppRole):
     """
 
     def _check(user: User = Depends(get_current_user)) -> User:
-        user_app_role = AppRole(user.role)
+        try:
+            user_app_role = AppRole(user.role)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role '{user.role}' on user record. Contact administrator.",
+            )
         if not has_required_role(user_app_role, min_role):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

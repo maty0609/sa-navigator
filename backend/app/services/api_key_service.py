@@ -7,6 +7,7 @@ import bcrypt
 from sqlmodel import Session, select
 
 from app.models.api_key import ApiKey
+from app.models.user import User
 
 
 def _generate_raw_key() -> str:
@@ -54,21 +55,14 @@ def create_api_key(
     return api_key, raw_key
 
 
-def validate_api_key(raw_key: str, db: Session) -> tuple[object, object] | None:
+def validate_api_key(raw_key: str, db: Session) -> tuple[ApiKey, User] | None:
     """Validate a raw API key.
 
     Returns (ApiKey, User) on success, or None on failure.
-    Also updates last_used_at on success.
+    Updates last_used_at — committed by the requesting route's transaction.
     """
 
-    from app.models.user import User
-
     # Look up by prefix for efficiency, then verify via bcrypt.checkpw
-    # (bcrypt is randomized so we can't look up by hash directly)
-    #
-    # Actually, the correct approach: store the raw key's bcrypt hash, and when validating,
-    # hash the incoming key and compare via bcrypt.checkpw against the stored hash.
-    # We look up by prefix first for efficiency.
     prefix = raw_key[:9]
     stmt = select(ApiKey).where(ApiKey.key_prefix.like(f"{prefix}%"))
     candidates = db.exec(stmt).all()
@@ -87,10 +81,9 @@ def validate_api_key(raw_key: str, db: Session) -> tuple[object, object] | None:
                 if expires_at_aware < datetime.now(UTC):
                     continue  # expired
 
-            # Update last used
+            # Update last used (no commit — let the route's transaction handle it)
             candidate.last_used_at = datetime.now(UTC)
             db.add(candidate)
-            db.commit()
 
             user = db.get(User, candidate.user_id)
             if user and user.is_active:

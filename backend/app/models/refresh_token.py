@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Column, String
 from sqlalchemy import Index as SqlaIndex
@@ -15,7 +15,7 @@ class RefreshToken(SQLModel, table=True):
     token: str = Field(max_length=128, sa_column=Column(String(128), unique=True, index=True))
     token_hash: str = Field(max_length=256)
     expires_at: datetime
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     revoked: bool = Field(default=False)
 
     __table_args__ = (

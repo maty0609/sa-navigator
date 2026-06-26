@@ -5,7 +5,7 @@ at least EDITOR role; reads (GET) require at least VIEWER role.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, func, select
@@ -172,7 +172,7 @@ def get_opportunity(
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
     return OpportunityRead.model_validate(opp)
 
 
@@ -198,7 +198,7 @@ def update_opportunity(
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
 
     update_data = body.model_dump(exclude_unset=True)
 
@@ -211,8 +211,8 @@ def update_opportunity(
     for field, value in update_data.items():
         setattr(opp, field, value)
 
-    opp.updated_at = datetime.utcnow()
-    opp.last_activity_at = datetime.utcnow()
+    opp.updated_at = datetime.now(UTC)
+    opp.last_activity_at = datetime.now(UTC)
 
     db.add(opp)
     db.commit()
@@ -251,7 +251,7 @@ def delete_opportunity(
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
 
     # Delete related records first to avoid foreign key violations
     for update in db.exec(
@@ -287,7 +287,7 @@ def list_opportunity_updates(
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
 
     # Fetch both manual updates and change logs
     updates = db.exec(
@@ -360,9 +360,9 @@ def create_opportunity_update(
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
 
-    opp.last_activity_at = datetime.utcnow()
+    opp.last_activity_at = datetime.now(UTC)
     db.add(opp)
 
     update = OpportunityUpdateModel(
@@ -401,14 +401,14 @@ def update_opportunity_update(
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
 
     update = db.get(OpportunityUpdateModel, update_id)
     if not update or update.opportunity_id != opportunity_id:
-        raise HTTPException(status_code=404, detail="Update not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update not found")
 
     update.text = body.text
-    update.edited_at = datetime.utcnow()
+    update.edited_at = datetime.now(UTC)
     db.add(update)
     db.commit()
     db.refresh(update)
@@ -439,11 +439,11 @@ def delete_opportunity_update(
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
 
     update = db.get(OpportunityUpdateModel, update_id)
     if not update or update.opportunity_id != opportunity_id:
-        raise HTTPException(status_code=404, detail="Update not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update not found")
 
     db.delete(update)
     db.commit()

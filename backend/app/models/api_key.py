@@ -1,7 +1,7 @@
 """API key database model."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Column, String
 from sqlalchemy import Index as SqlaIndex
@@ -22,7 +22,7 @@ class ApiKey(SQLModel, table=True):
     active: bool = Field(default=True, index=True)
     expires_at: datetime | None = Field(default=None)
     last_used_at: datetime | None = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     __table_args__ = (
         SqlaIndex("ix_api_keys_user_id", "user_id"),
