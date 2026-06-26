@@ -1,43 +1,50 @@
+"""Pydantic schemas for opportunities."""
+
 import uuid
 from datetime import datetime
-from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.opportunity import OpportunityStatus
 
 
 class OpportunityCreate(BaseModel):
-    client: str
-    project: str
-    owner: str
-    ccw_estimate: str = ""
-    salesforce_link: str = ""
-    sow_sod: str = ""
-    total_tcv: Optional[float] = None
-    total_bgp: Optional[float] = None
-    total_margin: Optional[float] = None
-    account_manager: str = ""
-    close_date: str = ""
-    status: OpportunityStatus = OpportunityStatus.NEW
+    """Request to create a new opportunity."""
+
+    client: str = Field(..., min_length=1, max_length=200, examples=["Acme Corp"])
+    project: str = Field(..., min_length=1, max_length=200, examples=["Digital Transformation"])
+    owner: str = Field(..., min_length=1, max_length=100, examples=["John Doe"])
+    ccw_estimate: str = Field(default="", max_length=200, examples=["120 hours"])
+    salesforce_link: str = Field(default="", max_length=500)
+    sow_sod: str = Field(default="", max_length=500)
+    total_tcv: float | None = Field(default=None, examples=[500000.0])
+    total_bgp: float | None = Field(default=None, examples=[75000.0])
+    total_margin: float | None = Field(default=None, examples=[15.0])
+    account_manager: str = Field(default="", max_length=200, examples=["Jane Smith"])
+    close_date: str = Field(default="", max_length=10, examples=["2025-06-30"])
+    status: OpportunityStatus = Field(default=OpportunityStatus.NEW)
 
 
 class OpportunityUpdate(BaseModel):
+    """Partial update for an existing opportunity. Only provided fields are changed."""
+
     client: str | None = None
     project: str | None = None
     owner: str | None = None
     ccw_estimate: str | None = None
     salesforce_link: str | None = None
     sow_sod: str | None = None
-    total_tcv: Optional[float] | None = None
-    total_bgp: Optional[float] | None = None
-    total_margin: Optional[float] | None = None
+    total_tcv: float | None | None = None
+    total_bgp: float | None | None = None
+    total_margin: float | None | None = None
     account_manager: str | None = None
     close_date: str | None = None
     status: OpportunityStatus | None = None
 
 
 class OpportunityRead(BaseModel):
+    """Full opportunity representation returned by the API."""
+
     id: uuid.UUID
     client: str
     project: str
@@ -45,9 +52,9 @@ class OpportunityRead(BaseModel):
     ccw_estimate: str
     salesforce_link: str
     sow_sod: str
-    total_tcv: Optional[float] = None
-    total_bgp: Optional[float] = None
-    total_margin: Optional[float] = None
+    total_tcv: float | None = None
+    total_bgp: float | None = None
+    total_margin: float | None = None
     account_manager: str
     close_date: str
     status: OpportunityStatus
@@ -60,10 +67,14 @@ class OpportunityRead(BaseModel):
 
 
 class OpportunityUpdateCreate(BaseModel):
-    text: str
+    """Request to add or edit a manual text update."""
+
+    text: str = Field(..., min_length=1, max_length=5000, examples=["Sent proposal to client"])
 
 
 class OpportunityUpdateRead(BaseModel):
+    """A manual text update on an opportunity."""
+
     id: uuid.UUID
     text: str
     opportunity_id: uuid.UUID
@@ -74,6 +85,8 @@ class OpportunityUpdateRead(BaseModel):
 
 
 class OpportunityChangeLogRead(BaseModel):
+    """An automatic field-level change log entry."""
+
     id: uuid.UUID
     field_name: str
     old_value: str | None
@@ -87,7 +100,9 @@ class OpportunityChangeLogRead(BaseModel):
 
 
 class OpportunityListResponse(BaseModel):
+    """Paginated list of opportunities."""
+
     items: list[OpportunityRead]
-    total: int
-    page: int
-    page_size: int
+    total: int = Field(..., description="Total number of matching opportunities")
+    page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Items per page")

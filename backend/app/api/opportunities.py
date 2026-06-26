@@ -1,3 +1,9 @@
+"""Opportunity CRUD endpoints with updates and change logs.
+
+All endpoints require authentication. Mutations (POST/PATCH/DELETE) require
+at least EDITOR role; reads (GET) require at least VIEWER role.
+"""
+
 import uuid
 from datetime import datetime
 
@@ -5,11 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, func, select
 
 from app.database import get_db
-from app.deps import get_current_user, get_current_user_id
+from app.deps import get_current_user_id, require_role
 from app.models.opportunity import Opportunity, OpportunityStatus
-from app.models.opportunity_update import OpportunityUpdate as OpportunityUpdateModel
 from app.models.opportunity_change_log import OpportunityChangeLog
+from app.models.opportunity_update import OpportunityUpdate as OpportunityUpdateModel
 from app.models.user import User
+from app.roles import AppRole
 from app.schemas.opportunity import (
     OpportunityChangeLogRead,
     OpportunityCreate,
@@ -23,24 +30,42 @@ from app.schemas.opportunity import (
 router = APIRouter(prefix="/api/opportunities", tags=["opportunities"])
 
 
-@router.get("", response_model=OpportunityListResponse)
+@router.get(
+    "",
+    response_model=OpportunityListResponse,
+    summary="List opportunities",
+    description=(
+        "List opportunities with optional search, filtering, sorting, and pagination. "
+        "Supports text search across multiple fields and exact filters on "
+        "owner, client, project, and status."
+    ),
+)
 def list_opportunities(
     search: str | None = Query(
         None,
         description=(
-            "Search across client, project, owner, "
+            "Free-text search across client, project, owner, "
             "ccw_estimate, salesforce_link, sow_sod, account_manager"
         ),
     ),
-    owner: str | None = Query(None, description="Filter by owner"),
-    client: str | None = Query(None, description="Filter by client"),
-    project: str | None = Query(None, description="Filter by project"),
-    status: OpportunityStatus | None = Query(None, description="Filter by status"),
-    sort: str = Query("-created_at", description="Sort field (prefix - for descending)"),
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(25, ge=1, le=100, description="Items per page"),
+    owner: str | None = Query(
+        None, description="Filter by owner (case-insensitive partial match)"
+    ),
+    client: str | None = Query(
+        None, description="Filter by client (case-insensitive partial match)"
+    ),
+    project: str | None = Query(
+        None, description="Filter by project (case-insensitive partial match)"
+    ),
+    status: OpportunityStatus | None = Query(None, description="Filter by exact status value"),
+    sort: str = Query(
+        "-created_at",
+        description="Sort field. Prefix with '-' for descending (e.g. '-close_date')",
+    ),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(25, ge=1, le=100, description="Items per page (1-100)"),
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role(AppRole.VIEWER)),
 ):
     conditions = []
 
@@ -100,11 +125,18 @@ def list_opportunities(
     )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=OpportunityRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an opportunity",
+    description="Create a new opportunity. Requires EDITOR role or higher.",
+)
 def create_opportunity(
     body: OpportunityCreate,
     db: Session = Depends(get_db),
     current_user_id: uuid.UUID = Depends(get_current_user_id),
+    _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
     opp = Opportunity(
         client=body.client,
@@ -127,11 +159,16 @@ def create_opportunity(
     return OpportunityRead.model_validate(opp)
 
 
-@router.get("/{opportunity_id}", response_model=OpportunityRead)
+@router.get(
+    "/{opportunity_id}",
+    response_model=OpportunityRead,
+    summary="Get opportunity details",
+    description="Retrieve a single opportunity by ID.",
+)
 def get_opportunity(
     opportunity_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role(AppRole.VIEWER)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
@@ -139,13 +176,25 @@ def get_opportunity(
     return OpportunityRead.model_validate(opp)
 
 
-@router.patch("/{opportunity_id}", response_model=OpportunityRead)
+@router.patch(
+    "/{opportunity_id}",
+    response_model=OpportunityRead,
+    summary="Update an opportunity",
+    description=(
+        "Partially update an opportunity. Only provided fields are changed. "
+        "Set ?log_changes=true to record field-level change history. "
+        "Requires EDITOR role or higher."
+    ),
+)
 def update_opportunity(
     opportunity_id: uuid.UUID,
     body: OpportunityUpdate,
-    log_changes: bool = Query(False, description="Log field-level changes if true"),
+    log_changes: bool = Query(
+        False, description="Log field-level changes to opportunity_change_logs"
+    ),
     db: Session = Depends(get_db),
     current_user_id: uuid.UUID = Depends(get_current_user_id),
+    _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
@@ -186,11 +235,19 @@ def update_opportunity(
     return OpportunityRead.model_validate(opp)
 
 
-@router.delete("/{opportunity_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{opportunity_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete an opportunity",
+    description=(
+        "Permanently delete an opportunity and all its updates/change logs. "
+        "Requires EDITOR role or higher."
+    ),
+)
 def delete_opportunity(
     opportunity_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
@@ -215,11 +272,18 @@ def delete_opportunity(
     db.commit()
 
 
-@router.get("/{opportunity_id}/updates")
+@router.get(
+    "/{opportunity_id}/updates",
+    summary="List opportunity updates",
+    description=(
+        "Get the activity feed for an opportunity: a merged, time-sorted list of "
+        "manual text updates and automatic change log entries."
+    ),
+)
 def list_opportunity_updates(
     opportunity_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role(AppRole.VIEWER)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
@@ -277,12 +341,22 @@ def list_opportunity_updates(
     return results
 
 
-@router.post("/{opportunity_id}/updates", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{opportunity_id}/updates",
+    response_model=OpportunityUpdateRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a text update",
+    description=(
+        "Add a manual text update to an opportunity's activity feed. "
+        "Requires EDITOR role or higher."
+    ),
+)
 def create_opportunity_update(
     opportunity_id: uuid.UUID,
     body: OpportunityUpdateCreate,
     db: Session = Depends(get_db),
     current_user_id: uuid.UUID = Depends(get_current_user_id),
+    _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
@@ -312,13 +386,18 @@ def create_opportunity_update(
     )
 
 
-@router.patch("/{opportunity_id}/updates/{update_id}", response_model=OpportunityUpdateRead)
+@router.patch(
+    "/{opportunity_id}/updates/{update_id}",
+    response_model=OpportunityUpdateRead,
+    summary="Edit a text update",
+    description="Edit the text of an existing manual update. Requires EDITOR role or higher.",
+)
 def update_opportunity_update(
     opportunity_id: uuid.UUID,
     update_id: uuid.UUID,
     body: OpportunityUpdateCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
@@ -346,12 +425,17 @@ def update_opportunity_update(
     )
 
 
-@router.delete("/{opportunity_id}/updates/{update_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{opportunity_id}/updates/{update_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a text update",
+    description="Remove a manual text update from an opportunity. Requires EDITOR role or higher.",
+)
 def delete_opportunity_update(
     opportunity_id: uuid.UUID,
     update_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
