@@ -1,3 +1,5 @@
+"""Application configuration via environment variables."""
+
 from pydantic_settings import BaseSettings
 
 
@@ -8,6 +10,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ALLOWED_ORIGINS: str = "http://localhost:3000"
+
+    # Maximum request body size in bytes (default 1 MB)
+    REQUEST_MAX_SIZE: int = 1_000_000
 
     @property
     def origins_list(self) -> list[str]:

@@ -1,10 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
-from sqlmodel import Field, SQLModel
 import sqlmodel
+from sqlmodel import Field, SQLModel
 
 
 class OpportunityStatus(str, Enum):
@@ -27,9 +26,9 @@ class Opportunity(SQLModel, table=True):
     ccw_estimate: str = Field(default="", max_length=200)
     salesforce_link: str = Field(default="", max_length=500)
     sow_sod: str = Field(default="", max_length=500)
-    total_tcv: Optional[float] = Field(default=None)
-    total_bgp: Optional[float] = Field(default=None)
-    total_margin: Optional[float] = Field(default=None)
+    total_tcv: float | None = Field(default=None)
+    total_bgp: float | None = Field(default=None)
+    total_margin: float | None = Field(default=None)
     account_manager: str = Field(default="", max_length=200)
     close_date: str = Field(default="", max_length=10)
     status: OpportunityStatus = Field(
@@ -37,6 +36,6 @@ class Opportunity(SQLModel, table=True):
         sa_type=sqlmodel.String(30),
     )
     created_by: uuid.UUID = Field(foreign_key="user.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    last_activity_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_activity_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)

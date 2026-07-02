@@ -19,6 +19,7 @@ TEST_ENGINE = create_engine(
 
 def test_get_db():
     from app.database import SessionFactory
+
     session = SessionFactory.__class__(TEST_ENGINE, class_=Session, expire_on_commit=False)()
     try:
         yield session
@@ -47,6 +48,7 @@ def setup_test_env():
 @pytest.fixture
 def db():
     from app.database import SessionFactory
+
     with SessionFactory.__class__(TEST_ENGINE, class_=Session, expire_on_commit=False)() as session:
         yield session
 
@@ -100,6 +102,21 @@ def test_opportunity(db: Session, test_user):
     db.commit()
     db.refresh(opp)
     return opp
+
+
+@pytest.fixture
+def test_api_key(db: Session, test_user):
+    """Create a test API key for the test user."""
+    from app.services.api_key_service import create_api_key as _create
+
+    api_key, raw_key = _create(
+        user_id=test_user.id,
+        name="test-agent",
+        role="editor",
+        expires_in_days=None,
+        db=db,
+    )
+    return api_key, raw_key
 
 
 # Helper for authenticated HTTP requests in tests

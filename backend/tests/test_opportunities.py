@@ -6,8 +6,8 @@ from sqlmodel import Session, select
 
 from app.main import app
 from app.models.opportunity import Opportunity, OpportunityStatus
-from app.models.opportunity_update import OpportunityUpdate as OpportunityUpdateModel
 from app.models.opportunity_change_log import OpportunityChangeLog
+from app.models.opportunity_update import OpportunityUpdate as OpportunityUpdateModel
 from app.models.user import User
 from app.services.auth_service import create_access_token, hash_password
 
