@@ -30,6 +30,32 @@ from app.schemas.opportunity import (
 router = APIRouter(prefix="/api/opportunities", tags=["opportunities"])
 
 
+def require_visible_opportunity(db: Session, opportunity_id: uuid.UUID) -> None:
+    """404 unless the opportunity exists and is not soft-deleted."""
+    _get_visible_opportunity(db, opportunity_id)
+
+
+def _get_visible_opportunity(db: Session, opportunity_id: uuid.UUID) -> Opportunity:
+    """Load an opportunity, hiding soft-deleted rows.
+
+    A soft-deleted opportunity still exists in the database, so a plain
+    `db.get()` would keep it fully readable and writable. Every endpoint that
+    addresses a single opportunity goes through here so the visibility rule
+    cannot drift between routes.
+    """
+    opp = db.get(Opportunity, opportunity_id)
+    if not opp or opp.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    return opp
+
+
+def _visibility_conditions(include_deleted: bool) -> list:
+    """Predicate excluding soft-deleted rows, unless explicitly requested."""
+    if include_deleted:
+        return []
+    return [Opportunity.deleted_at.is_(None)]
+
+
 @router.get(
     "",
     response_model=OpportunityListResponse,
@@ -58,6 +84,10 @@ def list_opportunities(
         None, description="Filter by project (case-insensitive partial match)"
     ),
     status: OpportunityStatus | None = Query(None, description="Filter by exact status value"),
+    include_deleted: bool = Query(
+        False,
+        description="Include opportunities that were deleted (marked lost and hidden)",
+    ),
     sort: str = Query(
         "-created_at",
         description="Sort field. Prefix with '-' for descending (e.g. '-close_date')",
@@ -67,7 +97,7 @@ def list_opportunities(
     db: Session = Depends(get_db),
     _user: User = Depends(require_role(AppRole.VIEWER)),
 ):
-    conditions = []
+    conditions = _visibility_conditions(include_deleted)
 
     if search:
         search_pattern = f"%{search}%"
@@ -167,11 +197,14 @@ def create_opportunity(
 )
 def get_opportunity(
     opportunity_id: uuid.UUID,
+    include_deleted: bool = Query(
+        False, description="Include the opportunity even if it was deleted (marked lost)"
+    ),
     db: Session = Depends(get_db),
     _user: User = Depends(require_role(AppRole.VIEWER)),
 ):
     opp = db.get(Opportunity, opportunity_id)
-    if not opp:
+    if not opp or (opp.deleted_at is not None and not include_deleted):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
     return OpportunityRead.model_validate(opp)
 
@@ -196,9 +229,7 @@ def update_opportunity(
     current_user_id: uuid.UUID = Depends(get_current_user_id),
     _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
-    opp = db.get(Opportunity, opportunity_id)
-    if not opp:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    opp = _get_visible_opportunity(db, opportunity_id)
 
     update_data = body.model_dump(exclude_unset=True)
 
@@ -238,38 +269,119 @@ def update_opportunity(
 @router.delete(
     "/{opportunity_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete an opportunity",
+    summary="Delete an opportunity (marks it lost and hides it)",
     description=(
-        "Permanently delete an opportunity and all its updates/change logs. "
-        "Requires EDITOR role or higher."
+        "Soft delete: the opportunity is marked with status 'Lost' and a "
+        "deleted_at timestamp, and is hidden from list and detail views. The row "
+        "and its updates/change logs are NOT removed from the database. "
+        "Idempotent: deleting an already-deleted opportunity is also a no-op "
+        "success. Requires EDITOR role or higher."
     ),
 )
 def delete_opportunity(
     opportunity_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
     opp = db.get(Opportunity, opportunity_id)
     if not opp:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
 
-    # Delete related records first to avoid foreign key violations
-    for update in db.exec(
-        select(OpportunityUpdateModel).where(
-            OpportunityUpdateModel.opportunity_id == opportunity_id
-        )
-    ).all():
-        db.delete(update)
+    # Already deleted: RFC 9110 §9.2.2 makes DELETE idempotent, so repeat calls
+    # succeed without writing a second audit row.
+    if opp.deleted_at is not None:
+        return
 
-    for change_log in db.exec(
-        select(OpportunityChangeLog).where(
-            OpportunityChangeLog.opportunity_id == opportunity_id
-        )
-    ).all():
-        db.delete(change_log)
+    previous_status = OpportunityStatus(opp.status)
+    now = datetime.now(UTC)
 
-    db.delete(opp)
+    # Child rows (updates and change logs) are deliberately left in place: the
+    # point of this endpoint is that nothing is destroyed. The previous
+    # implementation deleted them, and the DB also has ON DELETE CASCADE on both
+    # foreign keys - neither runs here because the parent row is never deleted.
+    opp.status = OpportunityStatus.LOST
+    opp.status_before_delete = previous_status.value
+    opp.deleted_at = now
+    opp.updated_at = now
+
+    db.add(opp)
+    db.add(OpportunityChangeLog(
+        field_name="status",
+        old_value=previous_status.value,
+        new_value=OpportunityStatus.LOST.value,
+        opportunity_id=opportunity_id,
+        created_by=current_user_id,
+    ))
+    db.add(OpportunityChangeLog(
+        field_name="deleted_at",
+        old_value=None,
+        new_value=now.isoformat(),
+        opportunity_id=opportunity_id,
+        created_by=current_user_id,
+    ))
     db.commit()
+
+
+@router.post(
+    "/{opportunity_id}/restore",
+    response_model=OpportunityRead,
+    summary="Restore a deleted opportunity",
+    description=(
+        "Clear the deleted_at marker so the opportunity is visible again. "
+        "Requires EDITOR role or higher."
+    ),
+)
+def restore_opportunity(
+    opportunity_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
+    _user: User = Depends(require_role(AppRole.EDITOR)),
+):
+    opp = db.get(Opportunity, opportunity_id)
+    if not opp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+
+    if opp.deleted_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Opportunity is not deleted"
+        )
+
+    now = datetime.now(UTC)
+    old_deleted_at = opp.deleted_at
+    stored_status = opp.status_before_delete
+    restored_status = (
+        OpportunityStatus(stored_status)
+        if stored_status
+        else OpportunityStatus(opp.status)
+    )
+    was_lost = OpportunityStatus(opp.status)
+
+    opp.deleted_at = None
+    opp.status = restored_status
+    opp.status_before_delete = None
+    opp.updated_at = now
+
+    db.add(opp)
+    db.add(OpportunityChangeLog(
+        field_name="deleted_at",
+        old_value=old_deleted_at.isoformat() if old_deleted_at else None,
+        new_value=None,
+        opportunity_id=opportunity_id,
+        created_by=current_user_id,
+    ))
+    if restored_status != was_lost:
+        db.add(OpportunityChangeLog(
+            field_name="status",
+            old_value=was_lost.value,
+            new_value=restored_status.value,
+            opportunity_id=opportunity_id,
+            created_by=current_user_id,
+        ))
+    db.commit()
+    db.refresh(opp)
+
+    return OpportunityRead.model_validate(opp)
 
 
 @router.get(
@@ -285,9 +397,7 @@ def list_opportunity_updates(
     db: Session = Depends(get_db),
     _user: User = Depends(require_role(AppRole.VIEWER)),
 ):
-    opp = db.get(Opportunity, opportunity_id)
-    if not opp:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    require_visible_opportunity(db, opportunity_id)
 
     # Fetch both manual updates and change logs
     updates = db.exec(
@@ -358,9 +468,7 @@ def create_opportunity_update(
     current_user_id: uuid.UUID = Depends(get_current_user_id),
     _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
-    opp = db.get(Opportunity, opportunity_id)
-    if not opp:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    opp = _get_visible_opportunity(db, opportunity_id)
 
     opp.last_activity_at = datetime.now(UTC)
     db.add(opp)
@@ -399,9 +507,7 @@ def update_opportunity_update(
     db: Session = Depends(get_db),
     _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
-    opp = db.get(Opportunity, opportunity_id)
-    if not opp:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    require_visible_opportunity(db, opportunity_id)
 
     update = db.get(OpportunityUpdateModel, update_id)
     if not update or update.opportunity_id != opportunity_id:
@@ -437,9 +543,7 @@ def delete_opportunity_update(
     db: Session = Depends(get_db),
     _user: User = Depends(require_role(AppRole.EDITOR)),
 ):
-    opp = db.get(Opportunity, opportunity_id)
-    if not opp:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    require_visible_opportunity(db, opportunity_id)
 
     update = db.get(OpportunityUpdateModel, update_id)
     if not update or update.opportunity_id != opportunity_id:

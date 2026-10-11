@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 import sqlmodel
+from sqlalchemy import Index, text
 from sqlmodel import Field, SQLModel
 
 
@@ -18,6 +19,18 @@ class OpportunityStatus(str, Enum):
 
 class Opportunity(SQLModel, table=True):
     __tablename__ = "opportunities"
+    # Backs the `deleted_at IS NULL` predicate every list/count query carries.
+    # Declared here as well as in 0002_opportunity_soft_delete because init_db()
+    # builds real databases via create_all(), which only reads the model: define
+    # the index in the migration alone and production silently has no index.
+    __table_args__ = (
+        Index(
+            "ix_opportunities_deleted_at",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     client: str = Field(index=True, max_length=200)
@@ -39,3 +52,10 @@ class Opportunity(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_activity_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    # Soft-delete marker. Non-null means the opportunity was deleted: the row is
+    # kept in the database (with its updates and change logs) but is hidden from
+    # every normal read path. Kept separate from `status` so that a genuinely
+    # lost deal stays visible and lost-deal reporting stays trustworthy.
+    deleted_at: datetime | None = Field(default=None)
+    # Status held while the opportunity was deleted, so a restore does not guess.
+    status_before_delete: str | None = Field(default=None, max_length=30)

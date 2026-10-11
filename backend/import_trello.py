@@ -71,11 +71,14 @@ def main():
             for card in list_item["cards"]:
                 project_name = card["name"].strip('"')  # strip quotes if present
 
-                # Check for duplicates
+                # Check for duplicates among non-deleted opportunities only. A
+                # soft-deleted row must not be matched, or the import would keep
+                # appending updates to a record the user deliberately removed.
                 existing = db.exec(
                     select(Opportunity).where(
                         Opportunity.client == client_name,
                         Opportunity.project == project_name,
+                        Opportunity.deleted_at.is_(None),
                     )
                 ).first()
 

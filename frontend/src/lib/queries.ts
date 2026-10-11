@@ -26,6 +26,8 @@ export interface Opportunity {
   account_manager: string;
   close_date: string;
   status: OpportunityStatus;
+  deleted_at: string | null;
+  status_before_delete: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -87,6 +89,7 @@ export interface OpportunityFilters {
   client?: string;
   project?: string;
   status?: OpportunityStatus;
+  includeDeleted?: boolean;
   sort?: string;
   page?: number;
   page_size?: number;
@@ -106,13 +109,23 @@ export function useLogin() {
 // --- Opportunity Queries ---
 
 export function useOpportunities(filters: OpportunityFilters = {}) {
-  const { search = "", owner, client, project, status, sort = "-created_at", page = 1, page_size = 25 } = filters;
+  const { search = "", owner, client, project, status, includeDeleted = false, sort = "-created_at", page = 1, page_size = 25 } = filters;
 
   return useQuery<OpportunityListResponse>({
-    queryKey: ["opportunities", { search, owner, client, project, status, sort, page, page_size }],
+    queryKey: ["opportunities", { search, owner, client, project, status, includeDeleted, sort, page, page_size }],
     queryFn: async () => {
       const response = await api.get("/api/opportunities", {
-        params: { search, owner, client, project, status, sort, page, page_size },
+        params: {
+          search,
+          owner,
+          client,
+          project,
+          status,
+          sort,
+          page,
+          page_size,
+          ...(includeDeleted ? { include_deleted: true } : {}),
+        },
       });
       return response.data;
     },
@@ -134,7 +147,10 @@ export function useOpportunity(id: string | undefined) {
 export function useCreateOpportunity() {
   const queryClient = useQueryClient();
 
-  return useMutation<Opportunity, Error, Omit<Opportunity, "id" | "created_by" | "created_at" | "updated_at" | "last_activity_at">>({
+  return useMutation<Opportunity, Error, Omit<
+    Opportunity,
+    "id" | "created_by" | "created_at" | "updated_at" | "last_activity_at" | "deleted_at" | "status_before_delete"
+  >>({
     mutationFn: async (data) => {
       const response = await api.post("/api/opportunities", data);
       return response.data;
@@ -170,7 +186,26 @@ export function useDeleteOpportunity() {
       await api.delete(`/api/opportunities/${id}`);
     },
     onSuccess: () => {
+      // A delete hides the row, so the detail and feed caches must be dropped
+      // too - otherwise a deleted opportunity stays open on screen.
       queryClient.invalidateQueries({ queryKey: ["opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["opportunity"] });
+      queryClient.invalidateQueries({ queryKey: ["opportunity_updates"] });
+    },
+  });
+}
+
+export function useRestoreOpportunity() {
+  const queryClient = useQueryClient();
+
+  return useMutation<Opportunity, Error, string>({
+    mutationFn: async (id) => {
+      const response = await api.post(`/api/opportunities/${id}/restore`);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["opportunity"] });
     },
   });
 }
