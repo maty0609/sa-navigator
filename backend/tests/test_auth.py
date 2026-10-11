@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -19,8 +19,8 @@ async def test_login_success(db: Session):
         full_name="Jane Doe",
         role="editor",
         is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
@@ -47,8 +47,8 @@ async def test_login_invalid_password(db: Session):
         password_hash=hash_password("secure123"),
         role="editor",
         is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
@@ -83,8 +83,8 @@ async def test_refresh_token_flow(db: Session):
         password_hash=hash_password("pass123"),
         role="editor",
         is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
@@ -111,8 +111,8 @@ async def test_logout(db: Session):
         password_hash=hash_password("pass123"),
         role="editor",
         is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()

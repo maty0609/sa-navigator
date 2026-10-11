@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -65,8 +65,8 @@ def test_user(db: Session):
         full_name="Test User",
         role="editor",
         is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
@@ -95,8 +95,8 @@ def test_opportunity(db: Session, test_user):
         salesforce_link="",
         status=OpportunityStatus.NEW,
         created_by=str(test_user.id),
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(opp)
     db.commit()
