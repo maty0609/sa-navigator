@@ -3,9 +3,21 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.opportunity import OpportunityStatus
+
+_NOT_NULL_FIELDS = {
+    "client",
+    "project",
+    "owner",
+    "ccw_estimate",
+    "salesforce_link",
+    "sow_sod",
+    "account_manager",
+    "close_date",
+    "status",
+}
 
 
 class OpportunityCreate(BaseModel):
@@ -41,6 +53,19 @@ class OpportunityUpdate(BaseModel):
     close_date: str | None = None
     status: OpportunityStatus | None = None
 
+    @model_validator(mode="after")
+    def _reject_null_fields(self) -> "OpportunityUpdate":
+        """All columns are NOT NULL; an explicit null means 'clear it', which is unsupported."""
+        null_fields = [
+            name
+            for name in self.model_fields_set
+            if name in _NOT_NULL_FIELDS and getattr(self, name) is None
+        ]
+        if null_fields:
+            msg = f"These fields cannot be null: {', '.join(sorted(null_fields))}"
+            raise ValueError(msg)
+        return self
+
 
 class OpportunityRead(BaseModel):
     """Full opportunity representation returned by the API."""
@@ -58,6 +83,12 @@ class OpportunityRead(BaseModel):
     account_manager: str
     close_date: str
     status: OpportunityStatus
+    deleted_at: datetime | None = Field(
+        default=None, description="Set when the opportunity was deleted (hidden); null if active"
+    )
+    status_before_delete: str | None = Field(
+        default=None, description="Status held while deleted; restored on restore"
+    )
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime

@@ -39,3 +39,10 @@ class Opportunity(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_activity_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    # Soft-delete marker. Non-null means the opportunity was deleted: the row is
+    # kept in the database (with its updates and change logs) but is hidden from
+    # every normal read path. Kept separate from `status` so that a genuinely
+    # lost deal stays visible and lost-deal reporting stays trustworthy.
+    deleted_at: datetime | None = Field(default=None)
+    # Status held while the opportunity was deleted, so a restore does not guess.
+    status_before_delete: str | None = Field(default=None, max_length=30)

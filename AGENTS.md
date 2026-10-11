@@ -63,7 +63,7 @@ http://localhost:8000
 GET /api/opportunities
 ```
 
-Query params: `search`, `owner`, `client`, `project`, `status`, `sort`, `page`, `page_size`
+Query params: `search`, `owner`, `client`, `project`, `status`, `sort`, `page`, `page_size`, `include_deleted`
 
 ```bash
 curl -H "X-API-Key: sk-..." \
@@ -106,6 +106,33 @@ DELETE /api/opportunities/{id}
 ```
 
 Requires `editor` role.
+
+**Soft delete.** The row is marked `status: "Lost"` plus a `deleted_at`
+timestamp and is hidden from list, search and detail views - it is **not**
+removed from the database, and its updates and change logs are preserved.
+Deleting an already-deleted opportunity is a successful no-op (still `204`).
+Hidden rows are reachable only with `?include_deleted=true`.
+
+#### Restore Opportunity
+
+```
+POST /api/opportunities/{id}/restore
+```
+
+Requires `editor` role. Clears `deleted_at` and puts the previous status back
+(held in `status_before_delete`), so a restore is lossless. Returns `400` if
+the opportunity is not currently deleted, `404` if it does not exist.
+
+#### Listing deleted opportunities
+
+```
+GET /api/opportunities?include_deleted=true
+GET /api/opportunities/{id}?include_deleted=true
+```
+
+Deleted rows are excluded unless `include_deleted=true` is passed. The `status`
+filter never reveals deleted rows on its own - `?status=Lost` returns only
+opportunities that were genuinely marked Lost, not deleted ones.
 
 #### Opportunity Updates Feed
 
@@ -165,6 +192,8 @@ No rate limits are enforced in this version. Production deployments should add r
   "account_manager": "Jane Smith",
   "close_date": "2025-06-30",
   "status": "New",
+  "deleted_at": null,
+  "status_before_delete": null,
   "created_by": "uuid",
   "creator_name": "Jane Smith",
   "created_at": "2025-01-01T00:00:00",

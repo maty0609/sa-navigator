@@ -288,12 +288,263 @@ async def test_delete_opportunity(db: Session):
 
         assert response.status_code == 204
 
-        # Verify it's gone
+        # Hidden from normal reads...
         response = await client.get(
             f"/api/opportunities/{opp.id}",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 404
+
+    # ...but the row is still in the database, marked lost.
+    db.expire_all()
+    stored = db.get(Opportunity, opp.id)
+    assert stored is not None
+    assert stored.deleted_at is not None
+    assert stored.status == OpportunityStatus.LOST
+    assert stored.status_before_delete == OpportunityStatus.NEW.value
+
+
+@pytest.mark.asyncio
+async def test_delete_keeps_updates_and_change_logs(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="KeepChildren", owner="John")
+
+    db.add(OpportunityUpdateModel(text="Sent proposal", opportunity_id=opp.id, created_by=user.id))
+    db.add(
+        OpportunityChangeLog(
+            field_name="client",
+            old_value="Old",
+            new_value="Acme",
+            opportunity_id=opp.id,
+            created_by=user.id,
+        )
+    )
+    db.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete(
+            f"/api/opportunities/{opp.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 204
+
+    db.expire_all()
+    updates = db.exec(
+        select(OpportunityUpdateModel).where(OpportunityUpdateModel.opportunity_id == opp.id)
+    ).all()
+    logs = db.exec(
+        select(OpportunityChangeLog).where(OpportunityChangeLog.opportunity_id == opp.id)
+    ).all()
+    assert len(updates) == 1
+    # one pre-existing log + the two delete audit entries (status + deleted_at)
+    assert {log.field_name for log in logs} == {"client", "status", "deleted_at"}
+
+
+@pytest.mark.asyncio
+async def test_deleted_opportunity_hidden_from_list_and_count(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    keep = _make_opp(db, user, client="Visible", project="Stays", owner="John")
+    gone = _make_opp(db, user, client="Hidden", project="Goes", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        base = await client.get(
+            "/api/opportunities", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert base.json()["total"] == 2
+
+        response = await client.delete(
+            f"/api/opportunities/{gone.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 204
+
+        listing = await client.get(
+            "/api/opportunities", headers={"Authorization": f"Bearer {token}"}
+        )
+        data = listing.json()
+        # total must agree with items, or pagination lies about how many rows exist
+        assert data["total"] == 1
+        assert [i["id"] for i in data["items"]] == [str(keep.id)]
+
+        # Searching must not surface it either.
+        searched = await client.get(
+            "/api/opportunities?search=Goes", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert searched.json()["total"] == 0
+
+        # It is only visible when explicitly asked for.
+        opted_in = await client.get(
+            "/api/opportunities?include_deleted=true",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert opted_in.json()["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_status_filter_does_not_reveal_deleted(db: Session):
+    """Deleted rows must not leak through the generic status filter."""
+    user = _make_test_user(db)
+    token = _make_token(user)
+    genuinely_lost = _make_opp(
+        db, user, client="Acme", project="RealLoss", owner="John",
+        status=OpportunityStatus.LOST,
+    )
+    deleted = _make_opp(db, user, client="Acme", project="Removed", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.delete(
+            f"/api/opportunities/{deleted.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        lost = await client.get(
+            "/api/opportunities?status=Lost", headers={"Authorization": f"Bearer {token}"}
+        )
+        data = lost.json()
+        assert data["total"] == 1
+        assert [i["id"] for i in data["items"]] == [str(genuinely_lost.id)]
+
+
+@pytest.mark.asyncio
+async def test_deleted_opportunity_cannot_be_patched_back(db: Session):
+    """PATCH on a hidden row is 404 - no silent un-delete by any editor."""
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Ghost", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.delete(
+            f"/api/opportunities/{opp.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        response = await client.patch(
+            f"/api/opportunities/{opp.id}",
+            json={"status": "New"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 404
+
+    db.expire_all()
+    assert db.get(Opportunity, opp.id).deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_deleted_opportunity_updates_feed_is_hidden(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Feed", owner="John")
+    db.add(OpportunityUpdateModel(text="Note", opportunity_id=opp.id, created_by=user.id))
+    db.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.delete(
+            f"/api/opportunities/{opp.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        feed = await client.get(
+            f"/api/opportunities/{opp.id}/updates",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert feed.status_code == 404
+
+        add = await client.post(
+            f"/api/opportunities/{opp.id}/updates",
+            json={"text": "sneaky"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert add.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_is_idempotent(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Twice", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.delete(
+            f"/api/opportunities/{opp.id}", headers={"Authorization": f"Bearer {token}"}
+        )
+        second = await client.delete(
+            f"/api/opportunities/{opp.id}", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert first.status_code == 204
+        # RFC 9110: DELETE is idempotent - a repeat must not become a 404
+        assert second.status_code == 204
+
+    db.expire_all()
+    logs = db.exec(
+        select(OpportunityChangeLog).where(
+            OpportunityChangeLog.opportunity_id == opp.id,
+            OpportunityChangeLog.field_name == "deleted_at",
+        )
+    ).all()
+    assert len(logs) == 1
+
+
+@pytest.mark.asyncio
+async def test_restore_opportunity(db: Session):
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="Restored", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.delete(
+            f"/api/opportunities/{opp.id}", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        response = await client.post(
+            f"/api/opportunities/{opp.id}/restore",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        assert response.json()["deleted_at"] is None
+        # The status is restored, not left stuck at "Lost".
+        assert response.json()["status"] == "New"
+
+        listing = await client.get(
+            "/api/opportunities?project=Restored",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert listing.json()["total"] == 1
+
+        # Restoring an active opportunity is an error, not a no-op surprise.
+        again = await client.post(
+            f"/api/opportunities/{opp.id}/restore",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert again.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_explicit_null_field_is_rejected(db: Session):
+    """All columns are NOT NULL - nulling one must be a 422, not a 500."""
+    user = _make_test_user(db)
+    token = _make_token(user)
+    opp = _make_opp(db, user, client="Acme", project="NullStatus", owner="John")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.patch(
+            f"/api/opportunities/{opp.id}",
+            json={"status": None},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 422
+
+    db.expire_all()
+    assert db.get(Opportunity, opp.id).status == OpportunityStatus.NEW
 
 
 @pytest.mark.asyncio

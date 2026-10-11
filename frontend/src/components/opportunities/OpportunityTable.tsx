@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useOpportunities, useDeleteOpportunity, Opportunity, OPPORTUNITY_STATUS_OPTIONS, OpportunityStatus } from "@/lib/queries";
+import { useOpportunities, useDeleteOpportunity, useRestoreOpportunity, Opportunity, OPPORTUNITY_STATUS_OPTIONS, OpportunityStatus } from "@/lib/queries";
 import { useDashboardContext } from "@/app/(dashboard)/layout";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, Pencil, Search, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { Trash2, Pencil, Search, ChevronLeft, ChevronRight, Loader2, RotateCcw } from "lucide-react";
 import { OpportunityDialog } from "@/components/opportunities/OpportunityDialog";
 
 type SortField = "client" | "project" | "owner" | "account_manager" | "created_at" | "updated_at" | "last_activity_at";
@@ -37,6 +37,7 @@ export function OpportunityTable() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<OpportunityStatus | "">("");
+  const [showDeleted, setShowDeleted] = useState(false);
   const [editItem, setEditItem] = useState<Opportunity | null>(null);
 
   const sort = sortDir === "desc" ? `-${sortField}` : sortField;
@@ -44,11 +45,13 @@ export function OpportunityTable() {
     search,
     client,
     status: statusFilter || undefined,
+    includeDeleted: showDeleted,
     sort,
     page,
     page_size: 25,
   });
   const deleteMutation = useDeleteOpportunity();
+  const restoreMutation = useRestoreOpportunity();
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -60,11 +63,19 @@ export function OpportunityTable() {
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this opportunity?")) {
+    if (
+      confirm(
+        "Mark this opportunity as lost and hide it? It stays in the database with its history and can be restored."
+      )
+    ) {
       await deleteMutation.mutateAsync(id);
       // Close card if the deleted opportunity is currently being viewed
       setSelectedOpportunityId(null);
     }
+  };
+
+  const handleRestore = async (id: string) => {
+    await restoreMutation.mutateAsync(id);
   };
 
   if (isLoading) {
@@ -106,6 +117,16 @@ export function OpportunityTable() {
             </option>
           ))}
         </select>
+        <label className="flex items-center gap-2 self-center text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={showDeleted}
+            onChange={(e) => { setShowDeleted(e.target.checked); setPage(1); }}
+            className="h-4 w-4 rounded border-input"
+            aria-label="Show deleted opportunities"
+          />
+          Show deleted
+        </label>
       </div>
 
       {/* Table */}
@@ -153,8 +174,8 @@ export function OpportunityTable() {
               data?.items.map((opp) => (
                 <TableRow
                   key={opp.id}
-                  className="cursor-pointer"
-                  onClick={() => setSelectedOpportunityId(opp.id)}
+                  className={opp.deleted_at ? "cursor-default opacity-60" : "cursor-pointer"}
+                  onClick={() => { if (!opp.deleted_at) setSelectedOpportunityId(opp.id); }}
                 >
                   <TableCell className="font-medium">{opp.client}</TableCell>
                   <TableCell className="max-w-xs truncate">{opp.project}</TableCell>
@@ -168,23 +189,37 @@ export function OpportunityTable() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => { e.stopPropagation(); setEditItem(opp); }}
-                        className="h-8 w-8"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => { e.stopPropagation(); handleDelete(opp.id); }}
-                        disabled={deleteMutation.isPending}
-                        className="h-8 w-8 text-destructive"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      {opp.deleted_at ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => { e.stopPropagation(); handleRestore(opp.id); }}
+                          disabled={restoreMutation.isPending}
+                          className="h-8 gap-1 text-xs"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" /> Restore
+                        </Button>
+                      ) : (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => { e.stopPropagation(); setEditItem(opp); }}
+                            className="h-8 w-8"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => { e.stopPropagation(); handleDelete(opp.id); }}
+                            disabled={deleteMutation.isPending}
+                            className="h-8 w-8 text-destructive"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

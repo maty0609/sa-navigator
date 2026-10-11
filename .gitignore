@@ -1,0 +1,22 @@
+# Local database backup — contains credentials, never commit
+backup.sql
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Env files
+.env
+*.env.local
+
+# OS
+.DS_Store
