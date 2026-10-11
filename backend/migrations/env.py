@@ -9,7 +9,15 @@ from sqlalchemy import engine_from_config, pool
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlmodel import SQLModel
+
+import app.models as _models  # noqa: F401  imported for its side effect only
 from app.config import settings
+
+# SQLModel registers a table only when its module is imported. Without the line
+# above, target_metadata is empty in every alembic process -- which makes
+# `alembic revision --autogenerate` silently emit a do-nothing revision and
+# `alembic check` claim it should drop every table. Neither failure looks like a
+# metadata bug, so it is easy to ship. Verified: [] before the import, 6 after.
 
 config = context.config
 # Honour an explicit override (alembic -x url=... or $ALEMBIC_DATABASE_URL)

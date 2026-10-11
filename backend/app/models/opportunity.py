@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 import sqlmodel
+from sqlalchemy import Index, text
 from sqlmodel import Field, SQLModel
 
 
@@ -18,6 +19,18 @@ class OpportunityStatus(str, Enum):
 
 class Opportunity(SQLModel, table=True):
     __tablename__ = "opportunities"
+    # Backs the `deleted_at IS NULL` predicate every list/count query carries.
+    # Declared here as well as in 0002_opportunity_soft_delete because init_db()
+    # builds real databases via create_all(), which only reads the model: define
+    # the index in the migration alone and production silently has no index.
+    __table_args__ = (
+        Index(
+            "ix_opportunities_deleted_at",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     client: str = Field(index=True, max_length=200)
